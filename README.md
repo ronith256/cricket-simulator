@@ -22,6 +22,8 @@ This project is a web application built with React, Vite, TypeScript, and Tailwi
 *   **State Management:** Zustand
 
 ## Demo
+**Access at https://cricket-analyzer.pages.dev/**
+<br></br>
 ![Demo](demo.png)
 
 ## Algorithm
