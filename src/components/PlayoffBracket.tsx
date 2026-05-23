@@ -135,7 +135,7 @@ export const PlayoffBracket: React.FC = () => {
       });
   }, [
       qualifier1, eliminator, isValidationInProgress, setValidationResult,
-      remainingFixtures, results, availableTeams, // Removed attemptNrrOptimization if not used by worker
+      remainingFixtures, results, availableTeams, attemptNrrOptimization,
   ]); // Dependencies for the callback
 
   return (
@@ -215,8 +215,8 @@ export const PlayoffBracket: React.FC = () => {
                         onChange={() => setAttemptNrrOptimization(!attemptNrrOptimization)}
                         disabled={isValidationInProgress}
                     />
-                    <div className={`block bg-gray-600 w-10 h-6 rounded-full ${isValidationInProgress ? 'opacity-50' : ''}`}></div>
-                    <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${attemptNrrOptimization ? 'transform translate-x-full bg-interactive' : ''} ${isValidationInProgress ? 'bg-gray-400' : ''}`}></div>
+                    <div className={`block w-10 h-6 rounded-full transition-colors ${attemptNrrOptimization ? 'bg-interactive' : 'bg-gray-600'} ${isValidationInProgress ? 'opacity-50' : ''}`}></div>
+                    <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${attemptNrrOptimization ? 'translate-x-4' : ''} ${isValidationInProgress ? 'bg-gray-400' : ''}`}></div>
                 </div>
                 <div className="ml-3 text-text-secondary text-sm">
                     Attempt NRR Tiebreaker (Slower)

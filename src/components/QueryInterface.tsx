@@ -161,8 +161,8 @@ const QueryInterface: React.FC = () => {
                           onChange={() => setAttemptNrrOptimization(!attemptNrrOptimization)}
                           disabled={isLoading}
                       />
-                      <div className={`block bg-gray-600 w-10 h-6 rounded-full ${isLoading ? 'opacity-50' : ''}`}></div>
-                      <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition ${attemptNrrOptimization ? 'transform translate-x-full bg-interactive' : ''} ${isLoading ? 'bg-gray-400' : ''}`}></div>
+                      <div className={`block w-10 h-6 rounded-full transition-colors ${attemptNrrOptimization ? 'bg-interactive' : 'bg-gray-600'} ${isLoading ? 'opacity-50' : ''}`}></div>
+                      <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${attemptNrrOptimization ? 'translate-x-4' : ''} ${isLoading ? 'bg-gray-400' : ''}`}></div>
                   </div>
                   <div className="ml-3 text-text-secondary text-sm">
                       Attempt NRR Tiebreaker (Slower)
