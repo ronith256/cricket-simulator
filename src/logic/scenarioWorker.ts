@@ -1,13 +1,14 @@
-import { Fixture, CompletedMatch, TeamInfo, PointsTableEntry, TeamRef } from '../types';
+import { Fixture, CompletedMatch, TeamInfo, PointsTableEntry, TeamRef, TeamQualifierStats } from '../types';
 import { calculatePointsTable } from './scoreCalculator'; // Assuming scoreCalculator is accessible
 
 // Define message types for communication between main thread and worker
 interface WorkerInput {
-    type: 'VALIDATE_4_TEAMS' | 'CHECK_SINGLE_TEAM';
+    type: 'VALIDATE_4_TEAMS' | 'CHECK_SINGLE_TEAM' | 'CALCULATE_PROBABILITIES';
     remainingFixtures: Fixture[];
     baseResults: CompletedMatch[];
     allTeams: TeamInfo[];
-    targetData: TargetPlayoffTeams | TargetSingleTeam;
+    targetData?: TargetPlayoffTeams | TargetSingleTeam;
+    optimizeNrr?: boolean;
 }
 
 // Type definition remains the same
@@ -133,10 +134,85 @@ const calculateMaxPossiblePoints = (
 };
 
 
-// Helper to simulate a single match outcome with plausible scores
-const simulateOutcome = (fixture: Fixture, outcome: 'home_win' | 'away_win' | 'tie'): CompletedMatch => {
+// Helper to generate NRR-optimized boundary scores to check tiebreakers
+const generateOptimizedScores = (
+    outcome: 'home_win' | 'away_win' | 'tie',
+    homeTeam: TeamRef,
+    awayTeam: TeamRef,
+    targetTeamIds: Set<string>
+): Pick<CompletedMatch, 'innings1_summary' | 'innings2_summary' | 'first_batting_team' | 'second_batting_team' | 'result' | 'winner_team_id'> => {
+    if (outcome === 'tie') {
+        return {
+            innings1_summary: "160/5 (20.0 Ov)",
+            innings2_summary: "160/5 (20.0 Ov)",
+            first_batting_team: homeTeam,
+            second_batting_team: awayTeam,
+            result: "Match tied",
+            winner_team_id: null
+        };
+    }
 
-    const scoreDetails = generatePlausibleScores(outcome, fixture.home_team, fixture.away_team);
+    const winner = outcome === 'home_win' ? homeTeam : awayTeam;
+    const loser = outcome === 'home_win' ? awayTeam : homeTeam;
+    const isWinnerTarget = targetTeamIds.has(winner.id);
+    const isLoserTarget = targetTeamIds.has(loser.id);
+
+    let firstBattingTeam = winner;
+    let secondBattingTeam = loser;
+    let innings1Runs = 150;
+    let innings1Wickets = 5;
+    let innings2Runs = 150;
+    let innings2Wickets = 5;
+    let result = "";
+
+    if (isWinnerTarget && !isLoserTarget) {
+        // Boost target NRR by winning by a massive margin
+        firstBattingTeam = winner;
+        secondBattingTeam = loser;
+        innings1Runs = 250;
+        innings1Wickets = 3;
+        innings2Runs = 50;
+        innings2Wickets = 10;
+        result = `${winner.code} won by 200 runs`;
+    } else if (!isWinnerTarget && isLoserTarget) {
+        // Protect target NRR by losing by a minimal margin
+        firstBattingTeam = winner;
+        secondBattingTeam = loser;
+        innings1Runs = 151;
+        innings1Wickets = 5;
+        innings2Runs = 150;
+        innings2Wickets = 5;
+        result = `${winner.code} won by 1 run`;
+    } else {
+        // Standard plausible score
+        firstBattingTeam = winner;
+        secondBattingTeam = loser;
+        innings1Runs = 170;
+        innings1Wickets = 5;
+        innings2Runs = 155;
+        innings2Wickets = 8;
+        result = `${winner.code} won by 15 runs`;
+    }
+
+    return {
+        innings1_summary: `${innings1Runs}/${innings1Wickets} (20.0 Ov)`,
+        innings2_summary: `${innings2Runs}/${innings2Wickets} (20.0 Ov)`,
+        first_batting_team: firstBattingTeam,
+        second_batting_team: secondBattingTeam,
+        result: result,
+        winner_team_id: winner.id
+    };
+};
+
+// Helper to simulate a single match outcome with plausible scores (supporting NRR optimization)
+const simulateOutcome = (
+    fixture: Fixture, 
+    outcome: 'home_win' | 'away_win' | 'tie',
+    targetTeamIds?: Set<string>
+): CompletedMatch => {
+    const scoreDetails = (targetTeamIds && targetTeamIds.size > 0)
+        ? generateOptimizedScores(outcome, fixture.home_team, fixture.away_team, targetTeamIds)
+        : generatePlausibleScores(outcome, fixture.home_team, fixture.away_team);
 
     return {
         match_id: fixture.match_id,
@@ -167,11 +243,10 @@ const findPossibleScenario = (
     baseResults: CompletedMatch[],
     allTeams: TeamInfo[],
     queryType: 'VALIDATE_4_TEAMS' | 'CHECK_SINGLE_TEAM',
-    targetData: TargetPlayoffTeams | TargetSingleTeam
-    // Removed reportProgress parameter
-): CompletedMatch[] | null => { // Return type changed
-
-    // Removed progress reporting logic
+    targetData: TargetPlayoffTeams | TargetSingleTeam,
+    optimizeNrr: boolean = false,
+    targetTeamIds: Set<string> = new Set()
+): CompletedMatch[] | null => {
 
     // Base Case: All remaining fixtures have been simulated
     if (fixtureIndex === remainingFixtures.length) {
@@ -219,7 +294,7 @@ const findPossibleScenario = (
 
     // Explore each possible outcome
     for (const outcome of outcomes) {
-        const simulatedResult = simulateOutcome(currentFixture, outcome);
+        const simulatedResult = simulateOutcome(currentFixture, outcome, optimizeNrr ? targetTeamIds : undefined);
         // Add the result for this level
         currentSimulatedResults.push(simulatedResult);
 
@@ -288,7 +363,7 @@ const findPossibleScenario = (
 
         if (!shouldPrune) {
             // If not pruned, recurse to the next level
-            foundScenario = findPossibleScenario(fixtureIndex + 1, remainingFixtures, currentSimulatedResults, baseResults, allTeams, queryType, targetData); // Removed reporter pass down
+            foundScenario = findPossibleScenario(fixtureIndex + 1, remainingFixtures, currentSimulatedResults, baseResults, allTeams, queryType, targetData, optimizeNrr, targetTeamIds);
         }
 
         // Backtrack: remove the result added for this level *before* checking if found
@@ -306,14 +381,169 @@ const findPossibleScenario = (
 };
 
 
+// Helper function to check if NRR is the deciding factor in the 4th/5th place tie breaker
+const checkNrrTie = (table: PointsTableEntry[], targetTeamId: string): boolean => {
+    if (table.length < 5) return false;
+    const fourthPoints = table[3].points;
+    const fifthPoints = table[4].points;
+    return fourthPoints === fifthPoints;
+};
+
+// Exhaustive simulation helper for small N (N <= 9)
+const runExhaustiveSimulation = (
+    remainingFixtures: Fixture[],
+    baseResults: CompletedMatch[],
+    allTeams: TeamInfo[],
+    progressCallback: (progress: number, processed: number, total: number) => void
+): TeamQualifierStats[] => {
+    const statsMap: Record<string, { top4: number; top2: number }> = {};
+    allTeams.forEach(t => {
+        statsMap[t.id] = { top4: 0, top2: 0 };
+    });
+
+    const totalScenarios = Math.pow(3, remainingFixtures.length);
+    let processedCount = 0;
+    const reportInterval = Math.max(1, Math.floor(totalScenarios / 10));
+
+    const traverse = (fixtureIndex: number, currentSimulated: CompletedMatch[]) => {
+        if (fixtureIndex === remainingFixtures.length) {
+            const finalResults = [...baseResults, ...currentSimulated];
+            const finalTable = calculatePointsTable(finalResults);
+
+            finalTable.forEach((entry, rank) => {
+                const teamId = entry.team.id;
+                if (statsMap[teamId]) {
+                    if (rank < 2) statsMap[teamId].top2++;
+                    if (rank < 4) statsMap[teamId].top4++;
+                }
+            });
+
+            processedCount++;
+            if (processedCount % reportInterval === 0 || processedCount === totalScenarios) {
+                const progress = Math.round((processedCount / totalScenarios) * 100);
+                progressCallback(progress, processedCount, totalScenarios);
+            }
+            return;
+        }
+
+        const fixture = remainingFixtures[fixtureIndex];
+        const outcomes: ('home_win' | 'away_win' | 'tie')[] = ['home_win', 'away_win', 'tie'];
+        for (const outcome of outcomes) {
+            currentSimulated.push(simulateOutcome(fixture, outcome));
+            traverse(fixtureIndex + 1, currentSimulated);
+            currentSimulated.pop();
+        }
+    };
+
+    traverse(0, []);
+
+    return allTeams.map(t => {
+        const top4Count = statsMap[t.id]?.top4 || 0;
+        const top2Count = statsMap[t.id]?.top2 || 0;
+        return {
+            teamId: t.id,
+            teamCode: t.code,
+            top4Count,
+            top2Count,
+            totalScenarios,
+            top4Percent: (top4Count / totalScenarios) * 100,
+            top2Percent: (top2Count / totalScenarios) * 100
+        };
+    });
+};
+
+// Monte Carlo simulation helper for large N (N > 9)
+const runMonteCarloSimulation = (
+    remainingFixtures: Fixture[],
+    baseResults: CompletedMatch[],
+    allTeams: TeamInfo[],
+    iterations: number = 25000,
+    progressCallback: (progress: number, processed: number, total: number) => void
+): TeamQualifierStats[] => {
+    const statsMap: Record<string, { top4: number; top2: number }> = {};
+    allTeams.forEach(t => {
+        statsMap[t.id] = { top4: 0, top2: 0 };
+    });
+
+    const reportInterval = Math.floor(iterations / 10);
+
+    for (let i = 0; i < iterations; i++) {
+        const simulatedResults: CompletedMatch[] = remainingFixtures.map(fixture => {
+            const rand = Math.random();
+            const outcome = rand < 0.45 ? 'home_win' : rand < 0.90 ? 'away_win' : 'tie';
+            return simulateOutcome(fixture, outcome);
+        });
+
+        const finalResults = [...baseResults, ...simulatedResults];
+        const finalTable = calculatePointsTable(finalResults);
+
+        finalTable.forEach((entry, rank) => {
+            const teamId = entry.team.id;
+            if (statsMap[teamId]) {
+                if (rank < 2) statsMap[teamId].top2++;
+                if (rank < 4) statsMap[teamId].top4++;
+            }
+        });
+
+        if ((i + 1) % reportInterval === 0 || i === iterations - 1) {
+            const progress = Math.round(((i + 1) / iterations) * 100);
+            progressCallback(progress, i + 1, iterations);
+        }
+    }
+
+    return allTeams.map(t => {
+        const top4Count = statsMap[t.id]?.top4 || 0;
+        const top2Count = statsMap[t.id]?.top2 || 0;
+        return {
+            teamId: t.id,
+            teamCode: t.code,
+            top4Count,
+            top2Count,
+            totalScenarios: iterations,
+            top4Percent: (top4Count / iterations) * 100,
+            top2Percent: (top2Count / iterations) * 100
+        };
+    });
+};
+
 // --- Worker Message Handler ---
 self.onmessage = (event: MessageEvent<WorkerInput>) => {
     console.log('Worker received message:', event.data);
-    const { type, remainingFixtures, baseResults, allTeams, targetData } = event.data;
-
-    // Removed progress reporting function
+    const { type, remainingFixtures, baseResults, allTeams, targetData, optimizeNrr } = event.data;
 
     try {
+        if (type === 'CALCULATE_PROBABILITIES') {
+            const progressCallback = (progress: number, processedCount: number, totalCount: number) => {
+                self.postMessage({ type: 'PROGRESS_UPDATE', progress, processedCount, totalCount });
+            };
+
+            const N = remainingFixtures.length;
+            let stats: TeamQualifierStats[];
+            if (N <= 9) {
+                stats = runExhaustiveSimulation(remainingFixtures, baseResults, allTeams, progressCallback);
+            } else {
+                stats = runMonteCarloSimulation(remainingFixtures, baseResults, allTeams, 25000, progressCallback);
+            }
+
+            self.postMessage({ type: 'PROBABILITY_RESULT', stats });
+            return;
+        }
+
+        // Build set of target team IDs for NRR optimization
+        const targetTeamIds = new Set<string>();
+        if (optimizeNrr) {
+            if (type === 'CHECK_SINGLE_TEAM' && targetData) {
+                const target = targetData as TargetSingleTeam;
+                if (target.teamId) targetTeamIds.add(target.teamId);
+            } else if (type === 'VALIDATE_4_TEAMS' && targetData) {
+                const targets = targetData as TargetPlayoffTeams;
+                if (targets.q1Team1Id) targetTeamIds.add(targets.q1Team1Id);
+                if (targets.q1Team2Id) targetTeamIds.add(targets.q1Team2Id);
+                if (targets.elTeam1Id) targetTeamIds.add(targets.elTeam1Id);
+                if (targets.elTeam2Id) targetTeamIds.add(targets.elTeam2Id);
+            }
+        }
+
         // Now returns the scenario array or null
         const foundScenario: CompletedMatch[] | null = findPossibleScenario(
             0,
@@ -321,15 +551,14 @@ self.onmessage = (event: MessageEvent<WorkerInput>) => {
             [],
             baseResults,
             allTeams,
-            type,
-            targetData
-            // Removed reportProgress argument
+            type as any,
+            targetData as any,
+            !!optimizeNrr,
+            targetTeamIds
         );
 
         let message = "";
         const isPossible = foundScenario !== null;
-
-        // Removed progress reporting call
 
         if (isPossible) {
              if (type === 'VALIDATE_4_TEAMS') {
@@ -341,12 +570,21 @@ self.onmessage = (event: MessageEvent<WorkerInput>) => {
                 } else if (specifiedCount > 0) {
                      message = `A possible scenario including the specified team(s) was found and applied.`;
                 } else {
-                     message = "Any playoff combination is possible; showing one example."; // Should ideally not happen if button requires >=1 selection
+                     message = "Any playoff combination is possible; showing one example.";
                 }
             } else if (type === 'CHECK_SINGLE_TEAM') {
                 const target = targetData as TargetSingleTeam;
                 const teamName = allTeams.find(t => t.id === target.teamId)?.name || target.teamId;
                 message = `A possible scenario where ${teamName} qualifies was found and applied.`;
+
+                // Add NRR tiebreaker note if relevant and not optimized
+                if (!optimizeNrr) {
+                    const finalResults = [...baseResults, ...foundScenario!];
+                    const finalTable = calculatePointsTable(finalResults);
+                    if (checkNrrTie(finalTable, target.teamId)) {
+                        message += " Note: Qualification depends on winning the NRR tiebreaker.";
+                    }
+                }
             }
         } else {
              if (type === 'VALIDATE_4_TEAMS') {
@@ -355,7 +593,7 @@ self.onmessage = (event: MessageEvent<WorkerInput>) => {
                  if (specifiedCount > 0) {
                     message = "No possible scenario exists for the specified playoff team(s) with the remaining fixtures.";
                  } else {
-                     message = "Calculation complete. No specific teams were requested."; // Edge case
+                     message = "Calculation complete. No specific teams were requested.";
                  }
             } else if (type === 'CHECK_SINGLE_TEAM') {
                 const target = targetData as TargetSingleTeam;
@@ -371,8 +609,6 @@ self.onmessage = (event: MessageEvent<WorkerInput>) => {
 
     } catch (error) {
         console.error('Error in scenario worker:', error);
-        // Optionally send an error message back
-        // Ensure the error message structure matches WorkerOutput if possible
         const errorOutput: WorkerOutput = { type: 'ERROR', message: `Calculation failed: ${error instanceof Error ? error.message : String(error)}` };
         self.postMessage(errorOutput);
     }

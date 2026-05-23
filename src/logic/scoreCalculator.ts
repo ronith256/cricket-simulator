@@ -26,6 +26,55 @@ export const parseScoreSummary = (summary: string | undefined | null): { runs: n
   return null;
 };
 
+// Helper to convert overs string (e.g., "19.1", "20") or number to balls
+export const parseOversToBalls = (oversStr: string | number | undefined | null): number => {
+  if (oversStr === undefined || oversStr === null) return 120;
+  const str = String(oversStr).trim();
+  if (!str) return 120;
+  const match = str.match(/(\d+)(?:\.(\d+))?/);
+  if (match) {
+    const overs = parseInt(match[1], 10);
+    const balls = match[2] ? parseInt(match[2], 10) : 0;
+    return overs * 6 + balls;
+  }
+  return 120;
+};
+
+// Helper to calculate runs and balls credited for NRR based on all-out and DLS criteria
+export const getNRRContribution = (
+  match: CompletedMatch,
+  inningsSummary: string | undefined | null,
+  isFirstInnings: boolean
+): { runs: number; balls: number } | null => {
+  const innings = parseScoreSummary(inningsSummary);
+  if (!innings) return null;
+
+  let runs = innings.runs;
+  let balls = innings.balls;
+
+  if (match.dls_applied) {
+    const revisedBalls = parseOversToBalls(match.revised_overs);
+    if (isFirstInnings) {
+      if (match.revised_target) {
+        const revisedTarget = parseInt(match.revised_target, 10);
+        runs = revisedTarget - 1; // Par score for NRR is target - 1
+      }
+      balls = revisedBalls;
+    } else {
+      if (innings.wickets === 10) {
+        balls = revisedBalls;
+      }
+    }
+  } else {
+    if (innings.wickets === 10) {
+      balls = 120; // 20.0 overs in balls
+    }
+  }
+
+  return { runs, balls };
+};
+
+
 
 // Helper to format score string: e.g., 154/10 (19.5 Overs)
 const formatScoreString = (runs: number, wickets: number, balls: number): string => {
@@ -241,23 +290,25 @@ export const calculatePointsTable = (
       }
 
       // --- NRR Calculation Data ---
-      const innings1 = parseScoreSummary(match.innings1_summary);
-      const innings2 = parseScoreSummary(match.innings2_summary);
       const firstBattingTeamId = match.first_batting_team?.id;
       const secondBattingTeamId = match.second_batting_team?.id;
 
-      if (innings1 && firstBattingTeamId && secondBattingTeamId && teamsMap[firstBattingTeamId] && teamsMap[secondBattingTeamId]) {
-        teamsMap[firstBattingTeamId].runsScored += innings1.runs;
-        teamsMap[firstBattingTeamId].ballsFaced += innings1.balls;
-        teamsMap[secondBattingTeamId].runsConceded += innings1.runs;
-        teamsMap[secondBattingTeamId].ballsBowled += innings1.balls;
-      }
+      if (firstBattingTeamId && secondBattingTeamId) {
+        const inn1Cont = getNRRContribution(match, match.innings1_summary, true);
+        if (inn1Cont && teamsMap[firstBattingTeamId] && teamsMap[secondBattingTeamId]) {
+          teamsMap[firstBattingTeamId].runsScored += inn1Cont.runs;
+          teamsMap[firstBattingTeamId].ballsFaced += inn1Cont.balls;
+          teamsMap[secondBattingTeamId].runsConceded += inn1Cont.runs;
+          teamsMap[secondBattingTeamId].ballsBowled += inn1Cont.balls;
+        }
 
-      if (innings2 && secondBattingTeamId && firstBattingTeamId && teamsMap[secondBattingTeamId] && teamsMap[firstBattingTeamId]) {
-        teamsMap[secondBattingTeamId].runsScored += innings2.runs;
-        teamsMap[secondBattingTeamId].ballsFaced += innings2.balls;
-        teamsMap[firstBattingTeamId].runsConceded += innings2.runs;
-        teamsMap[firstBattingTeamId].ballsBowled += innings2.balls;
+        const inn2Cont = getNRRContribution(match, match.innings2_summary, false);
+        if (inn2Cont && teamsMap[secondBattingTeamId] && teamsMap[firstBattingTeamId]) {
+          teamsMap[secondBattingTeamId].runsScored += inn2Cont.runs;
+          teamsMap[secondBattingTeamId].ballsFaced += inn2Cont.balls;
+          teamsMap[firstBattingTeamId].runsConceded += inn2Cont.runs;
+          teamsMap[firstBattingTeamId].ballsBowled += inn2Cont.balls;
+        }
       }
     });
 

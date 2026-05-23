@@ -18,8 +18,9 @@ import {
 // Removed import of initialTeamsData
 import {
   calculateImpliedResult,
-    calculatePointsTable, // Import extracted function
-    parseScoreSummary, // Import extracted helper
+  calculatePointsTable, // Import extracted function
+  parseScoreSummary, // Import extracted helper
+  getNRRContribution,
 } from '../logic/scoreCalculator';
 
 const transformFixtures = (fixtures: any[]): Fixture[] => {
@@ -334,18 +335,21 @@ export const usePointsTableStore = create<PointsTableState>((set, get) => ({
 
         finalResultsList.forEach(match => {
             if (match.home_team.id === teamId || match.away_team.id === teamId) {
-                const innings1 = parseScoreSummary(match.innings1_summary);
-                const innings2 = parseScoreSummary(match.innings2_summary);
                 const firstBatId = match.first_batting_team?.id;
                 const secondBatId = match.second_batting_team?.id;
 
-                if (innings1 && firstBatId && secondBatId) {
-                    if (firstBatId === teamId) { teamRunsScored += innings1.runs; teamBallsFaced += innings1.balls; }
-                    if (secondBatId === teamId) { teamRunsConceded += innings1.runs; teamBallsBowled += innings1.balls; }
-                }
-                if (innings2 && firstBatId && secondBatId) {
-                    if (secondBatId === teamId) { teamRunsScored += innings2.runs; teamBallsFaced += innings2.balls; }
-                    if (firstBatId === teamId) { teamRunsConceded += innings2.runs; teamBallsBowled += innings2.balls; }
+                if (firstBatId && secondBatId) {
+                    const inn1Cont = getNRRContribution(match, match.innings1_summary, true);
+                    if (inn1Cont) {
+                        if (firstBatId === teamId) { teamRunsScored += inn1Cont.runs; teamBallsFaced += inn1Cont.balls; }
+                        if (secondBatId === teamId) { teamRunsConceded += inn1Cont.runs; teamBallsBowled += inn1Cont.balls; }
+                    }
+
+                    const inn2Cont = getNRRContribution(match, match.innings2_summary, false);
+                    if (inn2Cont) {
+                        if (secondBatId === teamId) { teamRunsScored += inn2Cont.runs; teamBallsFaced += inn2Cont.balls; }
+                        if (firstBatId === teamId) { teamRunsConceded += inn2Cont.runs; teamBallsBowled += inn2Cont.balls; }
+                    }
                 }
             }
         });

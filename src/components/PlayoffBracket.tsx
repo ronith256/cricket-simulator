@@ -131,7 +131,7 @@ export const PlayoffBracket: React.FC = () => {
               elTeam1Id: elTeam1?.id || null,
               elTeam2Id: elTeam2?.id || null,
           },
-          // optimizeNrr: attemptNrrOptimization, // Pass NRR flag if worker supports it and toggle exists
+          optimizeNrr: attemptNrrOptimization,
       });
   }, [
       qualifier1, eliminator, isValidationInProgress, setValidationResult,
